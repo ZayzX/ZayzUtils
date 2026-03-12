@@ -1,13 +1,19 @@
 package fr.zayzx.zayzutils;
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+
 import java.io.IOException;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.*;
 import java.net.http.HttpRequest.BodyPublishers;
 import java.net.http.HttpResponse.BodyHandlers;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 public final class HttpUtils {
 
@@ -15,11 +21,9 @@ public final class HttpUtils {
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
-    private HttpUtils() {}
+    private static HttpServer server;
 
-    /* =========================
-       SIMPLE GET
-       ========================= */
+    private HttpUtils() {}
 
     public static String get(String url) {
         try {
@@ -33,21 +37,6 @@ public final class HttpUtils {
             throw new RuntimeException(e);
         }
     }
-
-    public static void get(String url, Consumer<String> onSuccess, Consumer<Throwable> onError) {
-        AsyncUtils.runAsync(() -> {
-            try {
-                String body = get(url);
-                onSuccess.accept(body);
-            } catch (Throwable t) {
-                onError.accept(t);
-            }
-        });
-    }
-
-    /* =========================
-       SIMPLE POST
-       ========================= */
 
     public static String post(String url, String body) {
         try {
@@ -63,20 +52,51 @@ public final class HttpUtils {
         }
     }
 
-    public static void post(String url, String body, Consumer<String> onSuccess, Consumer<Throwable> onError) {
-        AsyncUtils.runAsync(() -> {
-            try {
-                String res = post(url, body);
-                onSuccess.accept(res);
-            } catch (Throwable t) {
-                onError.accept(t);
-            }
+    public static void listen(int port) {
+        try {
+            server = HttpServer.create(new InetSocketAddress(port), 0);
+            server.start();
+            System.out.println("HTTP server started on port " + port);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static void getRoute(String path, BiConsumer<HttpExchange, String> handler) {
+        server.createContext(path, exchange -> {
+
+            if (!exchange.getRequestMethod().equalsIgnoreCase("GET"))
+                return;
+
+            handler.accept(exchange, null);
         });
     }
 
-    /* =========================
-       DOWNLOAD FILE
-       ========================= */
+    public static void postRoute(String path, BiConsumer<HttpExchange, String> handler) {
+        server.createContext(path, exchange -> {
+
+            if (!exchange.getRequestMethod().equalsIgnoreCase("POST"))
+                return;
+
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            handler.accept(exchange, body);
+        });
+    }
+
+    public static void send(HttpExchange exchange, String response) {
+        try {
+            byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
+
+            exchange.sendResponseHeaders(200, bytes.length);
+
+            OutputStream os = exchange.getResponseBody();
+            os.write(bytes);
+            os.close();
+
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
 
     public static Path download(String url, Path target) {
         try {
@@ -86,19 +106,9 @@ public final class HttpUtils {
                     .build();
 
             return CLIENT.send(request, BodyHandlers.ofFile(target)).body();
+
         } catch (IOException | InterruptedException e) {
             throw new RuntimeException(e);
         }
-    }
-
-    public static void download(String url, Path target, Consumer<Path> onSuccess, Consumer<Throwable> onError) {
-        AsyncUtils.runAsync(() -> {
-            try {
-                Path path = download(url, target);
-                onSuccess.accept(path);
-            } catch (Throwable t) {
-                onError.accept(t);
-            }
-        });
     }
 }
